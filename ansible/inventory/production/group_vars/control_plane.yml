@@ -1,0 +1,6 @@
+---
+# Control-plane-specific variables
+kubernetes_role: control_plane
+api_server_advertise_address: "10.10.0.10"
+api_server_port: 6443
+kubeadm_init_config: "kubernetes/kubeadm/init.yaml"

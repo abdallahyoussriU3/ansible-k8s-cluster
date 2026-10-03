@@ -1,0 +1,4 @@
+---
+# Worker-specific variables
+kubernetes_role: worker
+kubeadm_join_config: "kubernetes/kubeadm/join-worker.yaml"

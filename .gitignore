@@ -1,0 +1,38 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local secrets and credentials
+*.pem
+*.key
+*.crt
+*.csr
+*.kubeconfig
+*.ovpn
+.env
+.env.*
+secrets/
+vault_password
+vault-password
+*.vault
+
+# Terraform / infrastructure state
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Temporary and generated files
+*.tmp
+*.bak
+*.orig
+*.log
+
+# Git / CI local files
+.gitkeep
+
+# ssh keys
+.ssh/
+ansible/inventory/production/hosts.local.yml

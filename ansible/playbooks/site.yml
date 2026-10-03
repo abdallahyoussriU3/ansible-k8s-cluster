@@ -1,0 +1,11 @@
+---
+- name: Kubernetes platform site
+  hosts: all
+  gather_facts: true
+  any_errors_fatal: true
+  roles:
+    - common
+    - security
+    - firewall
+    - containerd
+    - kubernetes

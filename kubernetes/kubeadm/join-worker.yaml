@@ -1,0 +1,9 @@
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: JoinConfiguration
+nodeRegistration:
+  name: "REPLACE_WITH_NODE_NAME"
+  kubeletExtraArgs:
+    cgroup-driver: "systemd"
+controlPlane:
+  localAPIEndpoint:
+    advertiseAddress: "REPLACE_WITH_PRIVATE_IP"

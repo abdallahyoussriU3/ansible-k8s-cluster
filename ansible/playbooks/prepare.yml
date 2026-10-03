@@ -1,0 +1,8 @@
+---
+- name: Prepare hosts for Kubernetes
+  hosts: all
+  gather_facts: true
+  roles:
+    - common
+    - security
+    - firewall

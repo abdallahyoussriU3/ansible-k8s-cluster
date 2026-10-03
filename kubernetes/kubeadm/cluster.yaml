@@ -1,0 +1,11 @@
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: "REPLACE_WITH_PINNED_VERSION"
+controlPlaneEndpoint: "REPLACE_WITH_CONTROL_PLANE_ENDPOINT"
+networking:
+  podSubnet: "REPLACE_WITH_POD_CIDR"
+  serviceSubnet: "REPLACE_WITH_SERVICE_CIDR"
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd

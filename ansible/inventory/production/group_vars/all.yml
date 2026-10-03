@@ -1,0 +1,15 @@
+---
+# Shared variables for all nodes
+ansible_python_interpreter: /usr/bin/python3
+kube_version: "1.30.4"
+containerd_version: "1.7.13"
+cluster_name: "test"
+timezone: "Etc/UTC"
+cni_plugin: "calico"
+cni_manifest_url: "https://raw.githubusercontent.com/projectcalico/calico/v3.29.1/manifests/calico.yaml"
+
+# Example test networking values for validation only
+pod_cidr: "10.244.0.0/16"
+service_cidr: "10.96.0.0/12"
+node_cidr: "10.10.0.0/16"
+management_network: "203.0.113.0/24"

@@ -1,0 +1,198 @@
+---
+- name: Install Kubernetes APT repository
+  ansible.builtin.blockinfile:
+    path: /etc/apt/sources.list.d/kubernetes.list
+    block: |
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ kube_version.split('.')[:2] | join('.') }}/deb/ /
+    create: true
+    mode: '0644'
+    owner: root
+    group: root
+  when: ansible_os_family == 'Debian'
+
+- name: Download Kubernetes apt signing key
+  ansible.builtin.get_url:
+    url: https://pkgs.k8s.io/core:/stable:/v{{ kube_version.split('.')[:2] | join('.') }}/deb/Release.key
+    dest: /tmp/kubernetes-release.key
+    mode: '0644'
+  when: ansible_os_family == 'Debian'
+
+- name: Install Kubernetes apt keyring
+  ansible.builtin.shell: |
+    install -d -m 0755 /etc/apt/keyrings
+    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg /tmp/kubernetes-release.key
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  when: ansible_os_family == 'Debian'
+
+- name: Install kubelet, kubeadm and kubectl
+  ansible.builtin.apt:
+    name:
+      - "kubelet={{ kube_version }}-1.1"
+      - "kubeadm={{ kube_version }}-1.1"
+      - "kubectl={{ kube_version }}-1.1"
+    state: present
+    update_cache: true
+    allow_downgrade: true
+  when: ansible_os_family == 'Debian'
+
+- name: Hold Kubernetes packages at the configured version
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+  when: ansible_os_family == 'Debian'
+
+- name: Configure kubelet systemd cgroup driver
+  ansible.builtin.copy:
+    dest: /etc/default/kubelet
+    content: |
+      KUBELET_EXTRA_ARGS=--cgroup-driver=systemd
+    mode: '0644'
+  when: ansible_os_family == 'Debian'
+
+- name: Enable and start kubelet
+  ansible.builtin.systemd:
+    name: kubelet
+    enabled: true
+    state: started
+
+- name: Check if control-plane already initialized
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: kubeadm_initialized
+  when: kubernetes_role == 'control_plane'
+
+- name: Render control-plane kubeadm config
+  ansible.builtin.copy:
+    dest: /etc/kubernetes/kubeadm-config.yaml
+    content: |
+      apiVersion: kubeadm.k8s.io/v1beta3
+      kind: ClusterConfiguration
+      kubernetesVersion: "{{ kube_version }}"
+      controlPlaneEndpoint: "{{ ansible_host }}:{{ api_server_port | default(6443) }}"
+      networking:
+        podSubnet: "{{ pod_cidr }}"
+        serviceSubnet: "{{ service_cidr }}"
+      controllerManager:
+        extraArgs:
+          bind-address: "0.0.0.0"
+      scheduler:
+        extraArgs:
+          bind-address: "0.0.0.0"
+    mode: '0644'
+  when: kubernetes_role == 'control_plane' and not kubeadm_initialized.stat.exists
+
+- name: Initialize Kubernetes control plane
+  ansible.builtin.command: kubeadm init --config=/etc/kubernetes/kubeadm-config.yaml
+  register: kubeadm_init_result
+  when: kubernetes_role == 'control_plane' and not kubeadm_initialized.stat.exists
+  changed_when: "'initialized successfully' in kubeadm_init_result.stdout"
+
+- name: Create kube configuration directory for the default user
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/.kube"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0755'
+  when: kubernetes_role == 'control_plane'
+
+- name: Copy admin kubeconfig to the user home
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "/home/{{ ansible_user }}/.kube/config"
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0600'
+  when: kubernetes_role == 'control_plane' and (not kubeadm_initialized.stat.exists or (kubeadm_init_result is defined and kubeadm_init_result is changed))
+
+- name: Check whether the kube-proxy addon is installed
+  ansible.builtin.command: kubectl --kubeconfig=/etc/kubernetes/admin.conf -n kube-system get daemonset kube-proxy
+  register: kube_proxy_daemonset
+  when: kubernetes_role == 'control_plane'
+  changed_when: false
+  failed_when: false
+
+- name: Install the kube-proxy addon when missing
+  ansible.builtin.command: kubeadm init phase addon kube-proxy --config=/etc/kubernetes/kubeadm-config.yaml
+  when: kubernetes_role == 'control_plane' and kube_proxy_daemonset.rc != 0
+
+- name: Generate worker join command from the control plane
+  ansible.builtin.command: kubeadm token create --print-join-command
+  register: kube_join_command_result
+  when: kubernetes_role == 'control_plane'
+  run_once: true
+  changed_when: false
+
+- name: Save worker join command as host fact
+  ansible.builtin.set_fact:
+    kube_join_command: "{{ kube_join_command_result.stdout | trim }}"
+  when: kubernetes_role == 'control_plane'
+  run_once: true
+
+- name: Read registered Kubernetes node names
+  ansible.builtin.command: kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes -o jsonpath={.items[*].metadata.name}
+  register: kubectl_registered_nodes
+  when: kubernetes_role == 'control_plane'
+  changed_when: false
+
+- name: Save registered Kubernetes node names as a host fact
+  ansible.builtin.set_fact:
+    kube_registered_nodes: "{{ kubectl_registered_nodes.stdout.split() }}"
+  when: kubernetes_role == 'control_plane'
+
+- name: Check for existing worker kubelet configuration
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: worker_kubelet_config
+  when: kubernetes_role == 'worker'
+
+- name: Reset stale state on workers not registered in the cluster
+  ansible.builtin.command: kubeadm reset -f
+  when:
+    - kubernetes_role == 'worker'
+    - groups['control_plane'] is defined
+    - groups['control_plane'] | length > 0
+    - hostvars[groups['control_plane'] | first].kube_registered_nodes is defined
+    - inventory_hostname not in hostvars[groups['control_plane'] | first].kube_registered_nodes
+    - worker_kubelet_config.stat.exists
+
+- name: Join worker nodes to the cluster
+  ansible.builtin.command: "{{ hostvars[groups['control_plane'] | first].kube_join_command }}"
+  when:
+    - kubernetes_role == 'worker'
+    - groups['control_plane'] is defined
+    - groups['control_plane'] | length > 0
+    - hostvars[groups['control_plane'] | first].kube_join_command is defined
+    - hostvars[groups['control_plane'] | first].kube_registered_nodes is defined
+    - inventory_hostname not in hostvars[groups['control_plane'] | first].kube_registered_nodes
+
+- name: Install CNI manifest for Calico
+  ansible.builtin.get_url:
+    url: "{{ cni_manifest_url }}"
+    dest: /tmp/kube-cni.yml
+    mode: '0644'
+  when: kubernetes_role == 'control_plane'
+
+- name: Apply the Calico CNI manifest
+  ansible.builtin.command: kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /tmp/kube-cni.yml
+  register: cni_apply
+  when: kubernetes_role == 'control_plane'
+  changed_when: "'configured' in cni_apply.stdout or 'created' in cni_apply.stdout"
+
+- name: Wait for all nodes to report Ready
+  ansible.builtin.command: kubectl --kubeconfig=/etc/kubernetes/admin.conf wait --for=condition=Ready nodes --all --timeout=600s
+  register: nodes_ready
+  when: kubernetes_role == 'control_plane'
+  changed_when: false
+
+- name: Check node readiness summary
+  ansible.builtin.command: kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes
+  register: kubectl_nodes
+  when: kubernetes_role == 'control_plane'
+  changed_when: false

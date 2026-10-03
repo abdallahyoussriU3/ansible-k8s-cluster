@@ -1,0 +1,4 @@
+---
+- name: Placeholder task for security role
+  ansible.builtin.debug:
+    msg: "Security role placeholder - to be implemented"

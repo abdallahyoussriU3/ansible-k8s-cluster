@@ -1,0 +1,4 @@
+---
+- name: Placeholder task for firewall role
+  ansible.builtin.debug:
+    msg: "Firewall role placeholder - to be implemented"
